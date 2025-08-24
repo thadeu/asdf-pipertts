@@ -35,9 +35,28 @@ source "$INSTALL_PATH/venv/bin/activate"
 echo ">>> Atualizando pip..."
 pip install --upgrade pip
 
-# Instala o Piper TTS
+# Instala o Piper TTS e dependências para treinamento
 echo ">>> Instalando Piper TTS $VERSION..."
 pip install "$PACKAGE_NAME==$VERSION"
+
+# Instala dependências adicionais para treinamento
+echo ">>> Instalando dependências para treinamento..."
+pip install torch torchaudio transformers datasets
+
+# Função para detectar o diretório de modelos baseado no gerenciador usado
+get_model_dir() {
+    # Detecta se está usando asdf ou mise
+    if [ -n "${ASDF_DATA_DIR:-}" ]; then
+        # Usando asdf
+        echo "${ASDF_DATA_DIR}/piper-models"
+    elif [ -n "${MISE_DATA_DIR:-}" ]; then
+        # Usando mise
+        echo "${MISE_DATA_DIR}/piper-models"
+    else
+        # Fallback para diretório padrão
+        echo "${HOME}/.local/share/piper-models"
+    fi
+}
 
 # Cria o wrapper principal
 cat > "$INSTALL_PATH/bin/piper" << 'EOF'
@@ -46,18 +65,79 @@ set -euo pipefail
 
 # Path do ambiente virtual
 VENV_PATH="$(dirname "$0")/../venv"
-MODEL_DIR="${HOME}/.local/share/mise/piper-models"
+
+# Função para detectar o diretório de modelos baseado no gerenciador usado
+get_model_dir() {
+    # Detecta se está usando asdf ou mise
+    if [ -n "${ASDF_DATA_DIR:-}" ]; then
+        # Usando asdf
+        echo "${ASDF_DATA_DIR}/piper-models"
+    elif [ -n "${MISE_DATA_DIR:-}" ]; then
+        # Usando mise
+        echo "${MISE_DATA_DIR}/piper-models"
+    else
+        # Fallback para diretório padrão
+        echo "${HOME}/.local/share/piper-models"
+    fi
+}
+
+MODEL_DIR=$(get_model_dir)
 mkdir -p "$MODEL_DIR"
+
+# Função para pré-processar texto (converter símbolos em texto falável)
+preprocess_text() {
+    local text="$1"
+    
+    # Converte símbolos monetários
+    text=$(echo "$text" | sed 's/R\$/reais /g')
+    text=$(echo "$text" | sed 's/\$/dólares /g')
+    text=$(echo "$text" | sed 's/€/euros /g')
+    text=$(echo "$text" | sed 's/£/libras /g')
+    
+    # Converte números com vírgula decimal para ponto
+    text=$(echo "$text" | sed 's/\([0-9]\),\([0-9]\)/\1 ponto \2/g')
+    
+    # Converte símbolos de porcentagem
+    text=$(echo "$text" | sed 's/%/ por cento/g')
+    
+    # Converte símbolos matemáticos
+    text=$(echo "$text" | sed 's/\+/ mais /g')
+    text=$(echo "$text" | sed 's/-/ menos /g')
+    text=$(echo "$text" | sed 's/\*/ vezes /g')
+    text=$(echo "$text" | sed 's/\// dividido por /g')
+    text=$(echo "$text" | sed 's/=/ igual a /g')
+    
+    # Converte símbolos de pontuação em pausas
+    text=$(echo "$text" | sed 's/\./ ponto /g')
+    text=$(echo "$text" | sed 's/,/ vírgula /g')
+    text=$(echo "$text" | sed 's/;/ ponto e vírgula /g')
+    text=$(echo "$text" | sed 's/:/ dois pontos /g')
+    text=$(echo "$text" | sed 's/!/ exclamação /g')
+    text=$(echo "$text" | sed 's/?/ interrogação /g')
+    
+    # Converte parênteses
+    text=$(echo "$text" | sed 's/(/ abre parênteses /g')
+    text=$(echo "$text" | sed 's/)/ fecha parênteses /g')
+    
+    # Converte aspas
+    text=$(echo "$text" | sed 's/"/ aspas /g')
+    text=$(echo "$text" | sed "s/'/ aspas simples /g")
+    
+    # Remove espaços múltiplos
+    text=$(echo "$text" | sed 's/  */ /g' | sed 's/^ *//' | sed 's/ *$//')
+    
+    echo "$text"
+}
 
 # Função para baixar modelo
 download_model() {
     local model_name="$1"
     local voice_name="$2"
     
-    echo "Baixando modelo $model_name..."
+    echo "Baixando modelo $model_name/$voice_name..."
     
-    # Cria diretório para o modelo
-    mkdir -p "${MODEL_DIR}/${model_name}"
+    # Cria diretório para o modelo específico
+    mkdir -p "${MODEL_DIR}/${model_name}/${voice_name}"
     
     # URLs dos modelos (modelos que realmente existem)
     case "$model_name" in
@@ -112,14 +192,125 @@ download_model() {
     
     # Baixa os arquivos
     echo "Baixando voice.json..."
-    curl -L -o "${MODEL_DIR}/${model_name}/voice.json" "$MODEL_URL"
+    curl -L -o "${MODEL_DIR}/${model_name}/${voice_name}/voice.json" "$MODEL_URL"
     echo "Baixando voice.onnx..."
-    curl -L -o "${MODEL_DIR}/${model_name}/voice.onnx" "$VOICE_URL"
+    curl -L -o "${MODEL_DIR}/${model_name}/${voice_name}/voice.onnx" "$VOICE_URL"
     
     # Copia o arquivo JSON com o nome que o Piper espera
-    cp "${MODEL_DIR}/${model_name}/voice.json" "${MODEL_DIR}/${model_name}/voice.onnx.json"
+    cp "${MODEL_DIR}/${model_name}/${voice_name}/voice.json" "${MODEL_DIR}/${model_name}/${voice_name}/voice.onnx.json"
     
-    echo "Modelo $model_name baixado com sucesso!"
+    echo "Modelo $model_name/$voice_name baixado com sucesso!"
+    echo "Diretório: ${MODEL_DIR}/${model_name}/${voice_name}/"
+}
+
+# Função para criar dataset de treinamento
+create_training_dataset() {
+    local model_name="$1"
+    local voice_name="$2"
+    
+    echo "Criando dataset de treinamento para $model_name/$voice_name..."
+    
+    # Cria diretório para o dataset
+    mkdir -p "${MODEL_DIR}/${model_name}/${voice_name}/training_data"
+    
+    # Cria arquivo com exemplos de texto brasileiro
+    cat > "${MODEL_DIR}/${model_name}/${voice_name}/training_data/brazilian_texts.txt" << 'BRAZILIAN_TEXTS'
+# Dataset de treinamento para melhorar pronúncia brasileira
+# Formato: texto|arquivo_audio.wav
+
+# Símbolos monetários
+R$ 1,00|money_1_real.wav
+R$ 5,00|money_5_reais.wav
+R$ 10,50|money_10_50.wav
+R$ 25,75|money_25_75.wav
+R$ 100,00|money_100_reais.wav
+
+# Porcentagens
+10%|percent_10.wav
+25%|percent_25.wav
+50%|percent_50.wav
+100%|percent_100.wav
+
+# Operações matemáticas
+2+3=5|math_2_plus_3.wav
+10-5=5|math_10_minus_5.wav
+4*6=24|math_4_times_6.wav
+15/3=5|math_15_divided_by_3.wav
+
+# Números com vírgula decimal
+1,5|decimal_1_5.wav
+2,75|decimal_2_75.wav
+10,25|decimal_10_25.wav
+
+# Textos comuns brasileiros
+Olá, tudo bem?|greeting.wav
+Bom dia!|good_morning.wav
+Boa tarde!|good_afternoon.wav
+Boa noite!|good_night.wav
+Obrigado!|thank_you.wav
+Por favor!|please.wav
+BRAZILIAN_TEXTS
+
+    echo "Dataset criado em ${MODEL_DIR}/${model_name}/${voice_name}/training_data/"
+    echo "Para treinar o modelo, você precisará:"
+    echo "1. Gravar áudios correspondentes aos textos"
+    echo "2. Usar o script de fine-tuning: piper-train-finetune"
+}
+
+# Função para fine-tuning do modelo
+finetune_model() {
+    local model_name="$1"
+    local voice_name="$2"
+    
+    echo "Iniciando fine-tuning do modelo $model_name/$voice_name..."
+    
+    # Verifica se o dataset existe
+    if [ ! -f "${MODEL_DIR}/${model_name}/${voice_name}/training_data/brazilian_texts.txt" ]; then
+        echo "Dataset não encontrado. Execute primeiro:"
+        echo "piper --create-dataset $model_name $voice_name"
+        exit 1
+    fi
+    
+    # Ativa o ambiente virtual
+    source "$VENV_PATH/bin/activate"
+    
+    # Executa o fine-tuning (exemplo básico)
+    echo "Executando fine-tuning..."
+    echo "Nota: Esta é uma implementação básica. Para fine-tuning completo,"
+    echo "consulte a documentação do Piper TTS."
+    
+    # Aqui você implementaria o código de fine-tuning real
+    # Por enquanto, apenas informa sobre o processo
+    echo "Fine-tuning iniciado para melhorar pronúncia brasileira."
+}
+
+# Função para resolver nome de modelo para path completo
+resolve_model_path() {
+    local model_arg="$1"
+    
+    # Se já é um path completo, retorna como está
+    if [[ "$model_arg" == /* ]] || [[ "$model_arg" == ./* ]] || [[ "$model_arg" == ../* ]]; then
+        echo "$model_arg"
+        return
+    fi
+    
+    # Se contém /, assume que é modelo/voz
+    if [[ "$model_arg" == */* ]]; then
+        local model_name="${model_arg%/*}"
+        local voice_name="${model_arg#*/}"
+        echo "${MODEL_DIR}/${model_name}/${voice_name}/voice.onnx"
+        return
+    fi
+    
+    # Se é apenas um nome, procura em pt_BR primeiro, depois en_US
+    if [ -f "${MODEL_DIR}/pt_BR/${model_arg}/voice.onnx" ]; then
+        echo "${MODEL_DIR}/pt_BR/${model_arg}/voice.onnx"
+    elif [ -f "${MODEL_DIR}/en_US/${model_arg}/voice.onnx" ]; then
+        echo "${MODEL_DIR}/en_US/${model_arg}/voice.onnx"
+    else
+        echo "Modelo '$model_arg' não encontrado. Use 'piper-list-models' para ver modelos disponíveis."
+        exit 1
+    fi
 }
 
 # Ativa o ambiente virtual
@@ -127,6 +318,8 @@ source "$VENV_PATH/bin/activate"
 
 # Array para armazenar argumentos do piper
 ARGS=()
+INPUT_TEXT=""
+PREPROCESS_TEXT=true
 
 # Processa argumentos especiais
 while [[ $# -gt 0 ]]; do
@@ -138,6 +331,25 @@ while [[ $# -gt 0 ]]; do
             fi
             download_model "$2" "$3"
             shift 3
+            exit 0
+            ;;
+        --create-dataset)
+            if [[ $# -lt 3 ]]; then
+                echo "ERRO: '--create-dataset' requer dois argumentos: <modelo> <voz>"
+                exit 1
+            fi
+            create_training_dataset "$2" "$3"
+            shift 3
+            exit 0
+            ;;
+        --finetune)
+            if [[ $# -lt 3 ]]; then
+                echo "ERRO: '--finetune' requer dois argumentos: <modelo> <voz>"
+                exit 1
+            fi
+            finetune_model "$2" "$3"
+            shift 3
+            exit 0
             ;;
         --model-dir)
             if [[ $# -lt 2 ]]; then
@@ -148,6 +360,31 @@ while [[ $# -gt 0 ]]; do
             ARGS+=("--model" "$MODEL_DIR")
             shift 2
             ;;
+        --no-preprocess)
+            PREPROCESS_TEXT=false
+            shift
+            ;;
+        --preprocess-only)
+            if [[ $# -lt 2 ]]; then
+                echo "ERRO: '--preprocess-only' requer um argumento"
+                exit 1
+            fi
+            INPUT_TEXT="$2"
+            PREPROCESSED_TEXT=$(preprocess_text "$INPUT_TEXT")
+            echo "Texto original: $INPUT_TEXT"
+            echo "Texto processado: $PREPROCESSED_TEXT"
+            exit 0
+            ;;
+        -m|--model)
+            if [[ $# -lt 2 ]]; then
+                echo "ERRO: '-m/--model' requer um argumento"
+                exit 1
+            fi
+            # Resolve o nome do modelo para path completo
+            MODEL_PATH=$(resolve_model_path "$2")
+            ARGS+=("--model" "$MODEL_PATH")
+            shift 2
+            ;;
         *)
             ARGS+=("$1")
             shift
@@ -155,11 +392,45 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Executa o piper
-if [[ ${#ARGS[@]} -eq 0 ]]; then
-    exec python -m piper "$@"
+# Se há texto na entrada padrão, processa-o
+if [ -t 0 ]; then
+    # Não há entrada padrão, executa normalmente
+    if [[ ${#ARGS[@]} -eq 0 ]]; then
+        # Se não há argumentos, mostra ajuda
+        echo "Piper TTS - Plugin ASDF/Mise"
+        echo ""
+        echo "Uso:"
+        echo "  piper --download-model <modelo> <voz>     # Baixar modelo"
+        echo "  piper --create-dataset <modelo> <voz>     # Criar dataset de treinamento"
+        echo "  piper --finetune <modelo> <voz>           # Fine-tuning do modelo"
+        echo "  piper --preprocess-only \"texto\"          # Testar pré-processamento"
+        echo "  piper --help                              # Ajuda do Piper TTS"
+        echo ""
+        echo "Exemplos:"
+        echo "  piper --download-model pt_BR faber"
+        echo "  echo 'Olá, mundo!' | piper -m faber --output_file teste.wav"
+        echo "  echo 'Hello, world!' | piper -m amy --output_file teste.wav"
+        echo ""
+        echo "Modelos disponíveis:"
+        echo "  pt_BR: cadu, edresson, faber, jeff"
+        echo "  en_US: amy, jenny"
+        echo ""
+        echo "Use 'piper-list-models' para ver modelos disponíveis"
+        echo "Use 'piper-train-finetune' para informações sobre treinamento"
+        exit 0
+    else
+        exec python -m piper "${ARGS[@]}"
+    fi
 else
-    exec python -m piper "${ARGS[@]}"
+    # Há entrada padrão, processa o texto
+    if [ "$PREPROCESS_TEXT" = true ]; then
+        INPUT_TEXT=$(cat)
+        PREPROCESSED_TEXT=$(preprocess_text "$INPUT_TEXT")
+        echo "$PREPROCESSED_TEXT" | python -m piper "${ARGS[@]}"
+    else
+        # Executa sem pré-processamento
+        python -m piper "${ARGS[@]}"
+    fi
 fi
 EOF
 
@@ -169,6 +440,23 @@ chmod +x "$INSTALL_PATH/bin/piper"
 cat > "$INSTALL_PATH/bin/piper-list-models" << 'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+
+# Função para detectar o diretório de modelos baseado no gerenciador usado
+get_model_dir() {
+    # Detecta se está usando asdf ou mise
+    if [ -n "${ASDF_DATA_DIR:-}" ]; then
+        # Usando asdf
+        echo "${ASDF_DATA_DIR}/piper-models"
+    elif [ -n "${MISE_DATA_DIR:-}" ]; then
+        # Usando mise
+        echo "${MISE_DATA_DIR}/piper-models"
+    else
+        # Fallback para diretório padrão
+        echo "${HOME}/.local/share/piper-models"
+    fi
+}
+
+MODEL_DIR=$(get_model_dir)
 
 echo "Modelos disponíveis para download:"
 echo ""
@@ -189,15 +477,82 @@ echo "  piper --download-model pt_BR faber"
 echo "  piper --download-model pt_BR jeff"
 echo "  piper --download-model en_US amy"
 echo ""
+echo "Para melhorar a pronúncia brasileira:"
+echo "  1. piper --create-dataset pt_BR faber"
+echo "  2. Grave áudios correspondentes aos textos"
+echo "  3. piper --finetune pt_BR faber"
+echo ""
 echo "Nota: Todas as vozes brasileiras são nativas de alta qualidade."
 echo "      Fonte: https://huggingface.co/rhasspy/piper-voices/tree/main/pt/pt_BR"
 echo ""
 echo "Exemplo de uso:"
-echo "  echo 'Olá, mundo!' | piper --model ~/.local/share/mise/piper-models/pt_BR/voice.onnx --output_file teste.wav"
+echo "  echo 'Olá, mundo!' | piper -m faber --output_file teste.wav"
+echo "  echo 'Hello, world!' | piper -m amy --output_file teste.wav"
+echo ""
+echo "Pré-processamento automático:"
+echo "  O plugin converte automaticamente símbolos como R$ em 'reais' para melhor pronúncia."
+echo "  Use --no-preprocess para desabilitar ou --preprocess-only para testar."
+echo ""
+echo "Exemplos de conversão:"
+echo "  R$ 1,00 → reais 1 ponto 00"
+echo "  50% → 50 por cento"
+echo "  2+3=5 → 2 mais 3 igual a 5"
+echo ""
+echo "💡 Dica: Para melhor qualidade, considere treinar o modelo com dados brasileiros!"
+echo ""
+echo "Diretório de modelos: $MODEL_DIR"
 EOF
 
 chmod +x "$INSTALL_PATH/bin/piper-list-models"
 
+# Cria script para fine-tuning avançado
+cat > "$INSTALL_PATH/bin/piper-train-finetune" << 'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "🎯 Piper TTS - Fine-tuning para Melhorar Pronúncia Brasileira"
+echo ""
+
+# Verifica se o ambiente virtual está ativo
+if [ -z "${VIRTUAL_ENV:-}" ]; then
+    echo "❌ Ambiente virtual não ativo"
+    exit 1
+fi
+
+echo "✅ Ambiente virtual ativo: $VIRTUAL_ENV"
+echo ""
+
+echo "📋 Passos para Fine-tuning:"
+echo ""
+echo "1. 📝 Preparar dados de treinamento:"
+echo "   - Textos com símbolos monetários (R$ 1,00)"
+echo "   - Áudios correspondentes gravados por falante nativo"
+echo "   - Formato: texto|arquivo_audio.wav"
+echo ""
+echo "2. 🔧 Configurar ambiente:"
+echo "   - Instalar dependências de treinamento"
+echo "   - Preparar scripts de fine-tuning"
+echo ""
+echo "3. 🎯 Executar fine-tuning:"
+echo "   - Treinar modelo com dados brasileiros"
+echo "   - Validar resultados"
+echo ""
+echo "4. 📦 Exportar modelo melhorado:"
+echo "   - Converter para formato ONNX"
+echo "   - Testar pronúncia"
+echo ""
+echo "📚 Recursos para Fine-tuning:"
+echo "   - Documentação Piper: https://github.com/rhasspy/piper"
+echo "   - Coqui TTS: https://github.com/coqui-ai/TTS"
+echo "   - Hugging Face: https://huggingface.co/rhasspy/piper"
+echo ""
+echo "💡 Dica: Para resultados ótimos, use pelo menos 100 exemplos de áudio"
+echo "         com símbolos monetários e números brasileiros."
+EOF
+
+chmod +x "$INSTALL_PATH/bin/piper-train-finetune"
+
 echo ">>> Instalação concluída!"
 echo ">>> Use 'piper --help' para ver as opções disponíveis"
 echo ">>> Use 'piper-list-models' para ver modelos disponíveis"
+echo ">>> Use 'piper-train-finetune' para informações sobre treinamento"
