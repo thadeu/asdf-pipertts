@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "🧪 Testando instalação do Piper TTS..."
+
+# Verifica se estamos testando uma instalação local
+if [ -f "./test-install/bin/piper" ]; then
+    PIPER_CMD="./test-install/bin/piper"
+    PIPER_LIST_CMD="./test-install/bin/piper-list-models"
+    VENV_PATH="./test-install/venv"
+    echo "✅ Detectada instalação local em ./test-install/"
+else
+    # Verifica se o comando piper está disponível
+    if ! command -v piper &> /dev/null; then
+        echo "❌ Comando 'piper' não encontrado"
+        exit 1
+    fi
+    PIPER_CMD="piper"
+    PIPER_LIST_CMD="piper-list-models"
+    VENV_PATH="$(dirname "$(which piper)")/../venv"
+fi
+
+echo "✅ Comando 'piper' encontrado: $PIPER_CMD"
+
+# Verifica se o comando piper-list-models está disponível
+if ! command -v "$PIPER_LIST_CMD" &> /dev/null; then
+    echo "❌ Comando 'piper-list-models' não encontrado"
+    exit 1
+fi
+
+echo "✅ Comando 'piper-list-models' encontrado"
+
+# Testa a ajuda do piper
+if ! "$PIPER_CMD" --help &> /dev/null; then
+    echo "❌ Erro ao executar '$PIPER_CMD --help'"
+    exit 1
+fi
+
+echo "✅ Comando '$PIPER_CMD --help' executado com sucesso"
+
+# Testa a listagem de modelos
+if ! "$PIPER_LIST_CMD" &> /dev/null; then
+    echo "❌ Erro ao executar '$PIPER_LIST_CMD'"
+    exit 1
+fi
+
+echo "✅ Comando '$PIPER_LIST_CMD' executado com sucesso"
+
+# Verifica se o ambiente virtual Python existe
+if [ ! -d "$VENV_PATH" ]; then
+    echo "❌ Ambiente virtual Python não encontrado em $VENV_PATH"
+    exit 1
+fi
+
+echo "✅ Ambiente virtual Python encontrado"
+
+# Verifica se o piper-tts está instalado no ambiente virtual
+if ! "$VENV_PATH/bin/python" -c "import piper" 2>/dev/null; then
+    echo "❌ Módulo 'piper' não encontrado no ambiente virtual"
+    exit 1
+fi
+
+echo "✅ Módulo 'piper' encontrado no ambiente virtual"
+
+# Verifica se o diretório de modelos existe
+MODEL_DIR="${HOME}/.local/share/mise/piper-models"
+if [ ! -d "$MODEL_DIR" ]; then
+    echo "⚠️  Diretório de modelos não existe: $MODEL_DIR"
+    echo "   Execute '$PIPER_LIST_CMD' para ver modelos disponíveis"
+else
+    echo "✅ Diretório de modelos encontrado: $MODEL_DIR"
+fi
+
+echo ""
+echo "🎉 Todos os testes passaram! O Piper TTS está funcionando corretamente."
+echo ""
+echo "📝 Próximos passos:"
+echo "   1. Execute '$PIPER_LIST_CMD' para ver modelos disponíveis"
+echo "   2. Execute '$PIPER_CMD --download-model pt_BR faber' para baixar voz em português"
+echo "   3. Teste com: echo 'Olá, Alice, esse é um teste de voz usando pontuação e números de 1,00 real até  5,00 reais' | $PIPER_CMD --model ~/.local/share/mise/piper-models/pt_BR/voice.onnx --output_file teste.wav"

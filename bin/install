@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Variáveis do plugin
+PACKAGE_NAME="piper-tts"
+VERSION="latest"
+
+# Path de instalação fornecido pelo asdf/mise
+INSTALL_PATH="${ASDF_INSTALL_PATH:-${1:-}}"
+if [ -z "$INSTALL_PATH" ]; then
+  echo ">>> ERRO: nenhum path de instalação fornecido"
+  exit 1
+fi
+
+echo ">>> Instalando Piper TTS em $INSTALL_PATH"
+
+# Cria diretórios
+mkdir -p "$INSTALL_PATH/bin"
+mkdir -p "$INSTALL_PATH/lib"
+
+# Detecta a versão se for latest
+if [ "$VERSION" = "latest" ]; then
+    VERSION=$(curl -s "https://pypi.org/pypi/$PACKAGE_NAME/json" | jq -r '.info.version')
+    echo ">>> Última versão detectada: $VERSION"
+fi
+
+# Cria ambiente virtual Python
+echo ">>> Criando ambiente virtual Python..."
+python3 -m venv "$INSTALL_PATH/venv"
+
+# Ativa o ambiente virtual
+source "$INSTALL_PATH/venv/bin/activate"
+
+# Atualiza pip
+echo ">>> Atualizando pip..."
+pip install --upgrade pip
+
+# Instala o Piper TTS
+echo ">>> Instalando Piper TTS $VERSION..."
+pip install "$PACKAGE_NAME==$VERSION"
+
+# Cria o wrapper principal
+cat > "$INSTALL_PATH/bin/piper" << 'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Path do ambiente virtual
+VENV_PATH="$(dirname "$0")/../venv"
+MODEL_DIR="${HOME}/.local/share/mise/piper-models"
+mkdir -p "$MODEL_DIR"
+
+# Função para baixar modelo
+download_model() {
+    local model_name="$1"
+    local voice_name="$2"
+    
+    echo "Baixando modelo $model_name..."
+    
+    # Cria diretório para o modelo
+    mkdir -p "${MODEL_DIR}/${model_name}"
+    
+    # URLs dos modelos (modelos que realmente existem)
+    case "$model_name" in
+        "pt_BR")
+            case "$voice_name" in
+                "cadu")
+                    MODEL_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/pt/pt_BR/cadu/medium/pt_BR-cadu-medium.onnx.json"
+                    VOICE_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/pt/pt_BR/cadu/medium/pt_BR-cadu-medium.onnx"
+                    ;;
+                "edresson")
+                    MODEL_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/pt/pt_BR/edresson/medium/pt_BR-edresson-medium.onnx.json"
+                    VOICE_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/pt/pt_BR/edresson/medium/pt_BR-edresson-medium.onnx"
+                    ;;
+                "faber")
+                    MODEL_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/pt/pt_BR/faber/medium/pt_BR-faber-medium.onnx.json"
+                    VOICE_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/pt/pt_BR/faber/medium/pt_BR-faber-medium.onnx"
+                    ;;
+                "jeff")
+                    MODEL_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/pt/pt_BR/jeff/medium/pt_BR-jeff-medium.onnx.json"
+                    VOICE_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/pt/pt_BR/jeff/medium/pt_BR-jeff-medium.onnx"
+                    ;;
+                *)
+                    echo "Voz $voice_name não encontrada para pt_BR"
+                    echo "Vozes disponíveis: cadu, edresson, faber, jeff"
+                    exit 1
+                    ;;
+            esac
+            ;;
+        "en_US")
+            case "$voice_name" in
+                "amy")
+                    MODEL_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/us/amy/medium/voice.json"
+                    VOICE_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/us/amy/medium/voice.onnx"
+                    ;;
+                "jenny")
+                    MODEL_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/us/jenny/medium/voice.json"
+                    VOICE_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/us/jenny/medium/voice.onnx"
+                    ;;
+                *)
+                    echo "Voz $voice_name não encontrada para en_US"
+                    echo "Vozes disponíveis: amy, jenny"
+                    exit 1
+                    ;;
+            esac
+            ;;
+        *)
+            echo "Modelo $model_name não suportado"
+            echo "Modelos disponíveis: pt_BR, en_US"
+            exit 1
+            ;;
+    esac
+    
+    # Baixa os arquivos
+    echo "Baixando voice.json..."
+    curl -L -o "${MODEL_DIR}/${model_name}/voice.json" "$MODEL_URL"
+    echo "Baixando voice.onnx..."
+    curl -L -o "${MODEL_DIR}/${model_name}/voice.onnx" "$VOICE_URL"
+    
+    # Copia o arquivo JSON com o nome que o Piper espera
+    cp "${MODEL_DIR}/${model_name}/voice.json" "${MODEL_DIR}/${model_name}/voice.onnx.json"
+    
+    echo "Modelo $model_name baixado com sucesso!"
+}
+
+# Ativa o ambiente virtual
+source "$VENV_PATH/bin/activate"
+
+# Array para armazenar argumentos do piper
+ARGS=()
+
+# Processa argumentos especiais
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --download-model)
+            if [[ $# -lt 3 ]]; then
+                echo "ERRO: '--download-model' requer dois argumentos: <modelo> <voz>"
+                exit 1
+            fi
+            download_model "$2" "$3"
+            shift 3
+            ;;
+        --model-dir)
+            if [[ $# -lt 2 ]]; then
+                echo "ERRO: '--model-dir' requer um argumento"
+                exit 1
+            fi
+            MODEL_DIR="$2"
+            ARGS+=("--model" "$MODEL_DIR")
+            shift 2
+            ;;
+        *)
+            ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# Executa o piper
+if [[ ${#ARGS[@]} -eq 0 ]]; then
+    exec python -m piper "$@"
+else
+    exec python -m piper "${ARGS[@]}"
+fi
+EOF
+
+chmod +x "$INSTALL_PATH/bin/piper"
+
+# Cria script auxiliar para listar modelos disponíveis
+cat > "$INSTALL_PATH/bin/piper-list-models" << 'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "Modelos disponíveis para download:"
+echo ""
+echo "Português Brasileiro (pt_BR):"
+echo "  - cadu (masculina) - voz brasileira nativa"
+echo "  - edresson (masculina) - voz brasileira nativa"
+echo "  - faber (masculina) - voz brasileira nativa"
+echo "  - jeff (masculina) - voz brasileira nativa"
+echo ""
+echo "Inglês Americano (en_US):"
+echo "  - amy (feminina)"
+echo "  - jenny (feminina)"
+echo ""
+echo "Para baixar um modelo:"
+echo "  piper --download-model pt_BR cadu"
+echo "  piper --download-model pt_BR edresson"
+echo "  piper --download-model pt_BR faber"
+echo "  piper --download-model pt_BR jeff"
+echo "  piper --download-model en_US amy"
+echo ""
+echo "Nota: Todas as vozes brasileiras são nativas de alta qualidade."
+echo "      Fonte: https://huggingface.co/rhasspy/piper-voices/tree/main/pt/pt_BR"
+echo ""
+echo "Exemplo de uso:"
+echo "  echo 'Olá, mundo!' | piper --model ~/.local/share/mise/piper-models/pt_BR/voice.onnx --output_file teste.wav"
+EOF
+
+chmod +x "$INSTALL_PATH/bin/piper-list-models"
+
+echo ">>> Instalação concluída!"
+echo ">>> Use 'piper --help' para ver as opções disponíveis"
+echo ">>> Use 'piper-list-models' para ver modelos disponíveis"

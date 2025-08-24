@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Busca versões do Piper TTS no PyPI
+curl -s "https://pypi.org/pypi/piper-tts/json" | \
+  jq -r '.releases | keys[]' | \
+  sort -V
