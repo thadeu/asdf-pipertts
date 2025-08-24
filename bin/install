@@ -84,51 +84,6 @@ get_model_dir() {
 MODEL_DIR=$(get_model_dir)
 mkdir -p "$MODEL_DIR"
 
-# Função para pré-processar texto (converter símbolos em texto falável)
-preprocess_text() {
-    local text="$1"
-    
-    # Converte símbolos monetários
-    text=$(echo "$text" | sed 's/R\$/reais /g')
-    text=$(echo "$text" | sed 's/\$/dólares /g')
-    text=$(echo "$text" | sed 's/€/euros /g')
-    text=$(echo "$text" | sed 's/£/libras /g')
-    
-    # Converte números com vírgula decimal para ponto
-    text=$(echo "$text" | sed 's/\([0-9]\),\([0-9]\)/\1 ponto \2/g')
-    
-    # Converte símbolos de porcentagem
-    text=$(echo "$text" | sed 's/%/ por cento/g')
-    
-    # Converte símbolos matemáticos
-    text=$(echo "$text" | sed 's/\+/ mais /g')
-    text=$(echo "$text" | sed 's/-/ menos /g')
-    text=$(echo "$text" | sed 's/\*/ vezes /g')
-    text=$(echo "$text" | sed 's/\// dividido por /g')
-    text=$(echo "$text" | sed 's/=/ igual a /g')
-    
-    # Converte símbolos de pontuação em pausas
-    text=$(echo "$text" | sed 's/\./ ponto /g')
-    text=$(echo "$text" | sed 's/,/ vírgula /g')
-    text=$(echo "$text" | sed 's/;/ ponto e vírgula /g')
-    text=$(echo "$text" | sed 's/:/ dois pontos /g')
-    text=$(echo "$text" | sed 's/!/ exclamação /g')
-    text=$(echo "$text" | sed 's/?/ interrogação /g')
-    
-    # Converte parênteses
-    text=$(echo "$text" | sed 's/(/ abre parênteses /g')
-    text=$(echo "$text" | sed 's/)/ fecha parênteses /g')
-    
-    # Converte aspas
-    text=$(echo "$text" | sed 's/"/ aspas /g')
-    text=$(echo "$text" | sed "s/'/ aspas simples /g")
-    
-    # Remove espaços múltiplos
-    text=$(echo "$text" | sed 's/  */ /g' | sed 's/^ *//' | sed 's/ *$//')
-    
-    echo "$text"
-}
-
 # Função para baixar modelo
 download_model() {
     local model_name="$1"
@@ -319,7 +274,6 @@ source "$VENV_PATH/bin/activate"
 # Array para armazenar argumentos do piper
 ARGS=()
 INPUT_TEXT=""
-PREPROCESS_TEXT=true
 
 # Processa argumentos especiais
 while [[ $# -gt 0 ]]; do
@@ -360,21 +314,7 @@ while [[ $# -gt 0 ]]; do
             ARGS+=("--model" "$MODEL_DIR")
             shift 2
             ;;
-        --no-preprocess)
-            PREPROCESS_TEXT=false
-            shift
-            ;;
-        --preprocess-only)
-            if [[ $# -lt 2 ]]; then
-                echo "ERRO: '--preprocess-only' requer um argumento"
-                exit 1
-            fi
-            INPUT_TEXT="$2"
-            PREPROCESSED_TEXT=$(preprocess_text "$INPUT_TEXT")
-            echo "Texto original: $INPUT_TEXT"
-            echo "Texto processado: $PREPROCESSED_TEXT"
-            exit 0
-            ;;
+
         -m|--model)
             if [[ $# -lt 2 ]]; then
                 echo "ERRO: '-m/--model' requer um argumento"
@@ -403,7 +343,6 @@ if [ -t 0 ]; then
         echo "  piper --download-model <modelo> <voz>     # Baixar modelo"
         echo "  piper --create-dataset <modelo> <voz>     # Criar dataset de treinamento"
         echo "  piper --finetune <modelo> <voz>           # Fine-tuning do modelo"
-        echo "  piper --preprocess-only \"texto\"          # Testar pré-processamento"
         echo "  piper --help                              # Ajuda do Piper TTS"
         echo ""
         echo "Exemplos:"
@@ -422,15 +361,8 @@ if [ -t 0 ]; then
         exec python -m piper "${ARGS[@]}"
     fi
 else
-    # Há entrada padrão, processa o texto
-    if [ "$PREPROCESS_TEXT" = true ]; then
-        INPUT_TEXT=$(cat)
-        PREPROCESSED_TEXT=$(preprocess_text "$INPUT_TEXT")
-        echo "$PREPROCESSED_TEXT" | python -m piper "${ARGS[@]}"
-    else
-        # Executa sem pré-processamento
-        python -m piper "${ARGS[@]}"
-    fi
+    # Há entrada padrão, executa diretamente
+    python -m piper "${ARGS[@]}"
 fi
 EOF
 
@@ -488,15 +420,6 @@ echo ""
 echo "Exemplo de uso:"
 echo "  echo 'Olá, mundo!' | piper -m faber --output_file teste.wav"
 echo "  echo 'Hello, world!' | piper -m amy --output_file teste.wav"
-echo ""
-echo "Pré-processamento automático:"
-echo "  O plugin converte automaticamente símbolos como R$ em 'reais' para melhor pronúncia."
-echo "  Use --no-preprocess para desabilitar ou --preprocess-only para testar."
-echo ""
-echo "Exemplos de conversão:"
-echo "  R$ 1,00 → reais 1 ponto 00"
-echo "  50% → 50 por cento"
-echo "  2+3=5 → 2 mais 3 igual a 5"
 echo ""
 echo "💡 Dica: Para melhor qualidade, considere treinar o modelo com dados brasileiros!"
 echo ""

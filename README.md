@@ -325,14 +325,7 @@ piper --model /path/to/custom/voice.onnx --output_file custom.wav
 piper --model-dir /path/to/models --output_file output.wav
 ```
 
-### Text preprocessing options
-```bash
-# Test text preprocessing
-piper --preprocess-only "R$ 1,00 e 50% de desconto"
 
-# Disable automatic preprocessing
-echo "R$ 1,00" | piper -m faber --no-preprocess --output_file raw.wav
-```
 
 ### Model resolution
 
